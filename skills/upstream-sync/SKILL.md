@@ -14,7 +14,7 @@ Using an upstream repo URL (from the skill argument, or inferred from the git re
 1. Determines the target development branch (the currently checked-out branch on `origin`).
 2. Fetches the latest semver-style tag from upstream.
 3. Compares it against `.upstream-version` (the dotfile tracking the upstream repo URL and last successfully merged upstream tag).
-4. If there's a new tag: creates a git worktree for isolation, creates a sync branch inside it, merges the upstream tag, resolves conflicts intelligently while preserving downstream fork changes from `DOWNSTREAM_CHANGES.md`, updates `.upstream-version`, pushes, opens a merge request back to the dev branch, comments with upstream release notes, and cleans up the worktree.
+4. If there's a new tag: creates a git worktree for isolation, creates a sync branch inside it, merges the upstream tag, resolves conflicts intelligently while preserving downstream fork changes from `DOWNSTREAM_CHANGES.md`, proposes updates to superseded `DOWNSTREAM_CHANGES.md` entries (with user confirmation), updates `.upstream-version`, pushes, opens a merge request back to the dev branch, comments with upstream release notes, and cleans up the worktree.
 5. If already up to date: exits cleanly with a short message and zero exit code.
 
 ## Inputs and invariants
@@ -207,7 +207,71 @@ git commit -m "chore: record upstream sync to $LATEST_TAG"
 
 Keep this as a separate commit from the merge — it makes the MR diff easier to read and lets reviewers see the bookkeeping change distinctly.
 
-### 9. Push and open the MR
+### 9. Review and update `DOWNSTREAM_CHANGES.md`
+
+After resolving conflicts and updating the tracking file, scan `DOWNSTREAM_CHANGES.md` for entries that this sync may have superseded or invalidated. This is the step that fulfills the promise made in the `AGENTS.md` Fork Maintenance section: *"When `/upstream-sync` detects that an upstream release implements the same feature or fix as a downstream change, it will update the entry's status to `superseded` and note the upstream version."*
+
+**Skip this step entirely** if `DOWNSTREAM_CHANGES.md` doesn't exist or contains no entries with `Status: active`.
+
+#### Detection
+
+For each `active` entry in `DOWNSTREAM_CHANGES.md`, check whether the upstream changes in `LAST_TAG..LATEST_TAG` affect it:
+
+1. Read the entry's **Scope** paths and **Files affected** list.
+2. Check whether upstream touched those files: `git diff --name-only refs/tags/$LAST_TAG..refs/tags/$LATEST_TAG -- <scope-paths>`.
+3. If upstream touched those files, inspect the upstream diff to classify the overlap:
+   - **Superseded**: upstream now implements the same feature/fix/config that the fork entry describes. The downstream change is redundant. Examples: upstream added the same config flag, upstream fixed the same bug, upstream introduced the same feature natively.
+   - **Partially superseded**: upstream implements part of what the downstream change does, but not all. The entry may need its description updated to reflect what's still fork-specific.
+   - **Unrelated overlap**: upstream touched the same file but the changes don't overlap with the downstream modification (e.g., upstream added a new function in a different section). No action needed.
+4. Also check for **removed entries**: if upstream deleted a file that a downstream entry's scope references, or if the merge in step 6 resolved a conflict by taking upstream's version entirely (removing the downstream code), the downstream change is effectively gone.
+
+Collect all detected entries into a list. If none are found, skip to step 10.
+
+#### User confirmation
+
+Present the findings to the user and ask for confirmation before modifying `DOWNSTREAM_CHANGES.md`. This is critical — the ledger is a human-maintained document and the agent's classification may be wrong. Format the prompt like:
+
+```
+The following DOWNSTREAM_CHANGES.md entries may need updating after this upstream sync:
+
+1. [slug-id]: Short description
+   → Superseded by upstream (v<LATEST_TAG>): upstream now implements <summary>
+   Proposed: Status → superseded, Superseded by upstream → <LATEST_TAG>
+
+2. [slug-id]: Short description
+   → Partially superseded: upstream added <summary>, but fork still overrides <detail>
+   Proposed: Update "What this changes" to reflect remaining fork-specific behavior
+
+3. [slug-id]: Short description
+   → Removed: upstream deleted <file>, downstream code no longer exists after merge
+   Proposed: Status → removed
+
+Apply these updates? (all / none / select specific entries)
+```
+
+The user may:
+- **Confirm all** — apply every proposed update.
+- **Confirm a subset** — apply only selected entries (by number or slug-id).
+- **Reject all** — leave `DOWNSTREAM_CHANGES.md` unchanged. Any supersession warnings are still noted in the MR description (step 10), just not written back to the ledger.
+
+In CI (non-interactive), do not modify `DOWNSTREAM_CHANGES.md` automatically. Instead, include the proposed updates as a section in the MR description so a human reviewer can apply them manually after review. This prevents an unattended agent from incorrectly classifying entries.
+
+#### Apply confirmed updates
+
+For each entry the user confirmed, edit `DOWNSTREAM_CHANGES.md`:
+
+- **Superseded**: set `Status` to `superseded`, set `Superseded by upstream` to `$LATEST_TAG`. Do not delete the entry — it's kept for history.
+- **Partially superseded**: update the `What this changes` description to reflect what's still fork-specific. Optionally update `Scope` or `Files affected` if the surviving fork changes are narrower. Keep `Status: active`.
+- **Removed**: set `Status` to `removed`. Optionally add a note in `What this changes` explaining when/why the change was removed (e.g., "Removed during upstream sync to v2.4.0 — upstream deleted the file").
+
+After editing, commit:
+
+```bash
+git add DOWNSTREAM_CHANGES.md
+git commit -m "chore: update DOWNSTREAM_CHANGES.md for upstream $LATEST_TAG sync"
+```
+
+### 10. Push and open the MR
 
 ```bash
 git push --set-upstream origin "$SYNC_BRANCH" --force-with-lease
@@ -277,16 +341,20 @@ Release notes are posted as a separate MR comment after creation. Summary/link: 
 ### Downstream changes superseded by upstream
 <bullet list of `DOWNSTREAM_CHANGES.md` entries replaced by upstream implementations; if none, say "None.">
 
+### DOWNSTREAM_CHANGES.md updates
+<if step 9 proposed updates, list what was applied or what is proposed for the reviewer to apply; if no updates needed, say "No ledger updates needed.">
+
 ### Reviewer checklist
 - [ ] Conflict resolutions preserve fork-specific behavior
 - [ ] CI passes
 - [ ] `.upstream-version` records `UPSTREAM_REPO=<UPSTREAM_URL>` and `UPSTREAM_VERSION=<LATEST_TAG>`
 - [ ] Upstream release notes comment was posted or the MR explains why release notes could not be fetched
+- [ ] `DOWNSTREAM_CHANGES.md` entries are accurate — verify any status changes to `superseded` or `removed`
 
 Generated by /upstream-sync.
 ```
 
-### 10. Cleanup the worktree
+### 11. Cleanup the worktree
 
 After the push and MR creation succeed, remove the worktree to reclaim disk space and avoid leaving stale checkouts:
 
@@ -312,13 +380,13 @@ cleanup_upstream_sync_worktree() {
 trap cleanup_upstream_sync_worktree EXIT
 ```
 
-### 11. Report
+### 12. Report
 
 Print a one-line summary to stdout: either `Opened MR !<n>: <title>` or `Already up to date at <tag>`. In CI, this ends up in the job log.
 
 ## Dry-run mode
 
-If `UPSTREAM_SYNC_DRY_RUN=1` is set in the environment, do everything through step 9 normally (worktree, branch, merge, conflict resolution, tracking-file bump, local commits) but **skip step 10's push and MR creation**. Instead, print the fully-composed MR body to stdout preceded by the line `=== DRY RUN MR BODY ===`, then print the release-note comment body preceded by `=== DRY RUN RELEASE NOTES COMMENT ===`, clean up the worktree (see step 10), and exit 0. This mode exists for local testing and for running the skill against a fixture repo without a real GitLab server — it exercises all the interesting logic without any external side effects.
+If `UPSTREAM_SYNC_DRY_RUN=1` is set in the environment, do everything through step 9 normally (worktree, branch, merge, conflict resolution, downstream ledger review, tracking-file bump, local commits) but **skip step 10's push and MR creation**. Instead, print the fully-composed MR body to stdout preceded by the line `=== DRY RUN MR BODY ===`, then print the release-note comment body preceded by `=== DRY RUN RELEASE NOTES COMMENT ===`, clean up the worktree (see step 11), and exit 0. This mode exists for local testing and for running the skill against a fixture repo without a real GitLab server — it exercises all the interesting logic without any external side effects.
 
 ## Failure modes and what to do
 
@@ -353,6 +421,10 @@ Conflicts in: src/config.rs, package-lock.json
 Resolving src/config.rs: upstream added a new field; fork's custom defaults preserved.
 Resolving package-lock.json: taking upstream, regenerating via npm install.
 Commit: merge + .upstream-version bump
+Reviewing DOWNSTREAM_CHANGES.md for superseded entries...
+  1 entry superseded by upstream: [feat-telemetry-optout] — upstream added native opt-out in v2.4.0
+  User confirmed: updating entry status to superseded.
+Commit: update DOWNSTREAM_CHANGES.md
 Pushed to origin/upstream-sync/v2.4.0
 Opened MR !142: Sync upstream: v2.4.0
 Cleaned up worktree .git-upstream-sync-worktree
