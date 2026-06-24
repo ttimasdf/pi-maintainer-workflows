@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md)
 
-Maintainer workflows for long-lived forks of upstream projects. **init-fork** sets up the fork infrastructure, and **upstream-sync** keeps it in sync with upstream releases. Both are pi prompt template commands.
+Prompt-template commands for maintaining long-lived forks and reverse-engineering existing codebases. **init-fork** sets up fork infrastructure, **upstream-sync** keeps forks in sync with upstream releases, and **codebase-archaeologist** extracts reconstruction-ready specifications from unfamiliar code.
 
 ## Commands
 
@@ -32,6 +32,17 @@ Initialize a soft fork for long-term downstream maintenance. Run once after clon
 
 Pairs with `/upstream-sync` for ongoing maintenance.
 
+### `/codebase-archaeologist`
+
+Reverse-engineer an existing codebase into a reconstruction-ready specification package.
+
+- Maps the project structure, entry points, domain logic, data model, and interfaces
+- Produces `spec.md`, `plan.md`, `data-model.md`, `research.md`, `completeness-report.md`, and `contracts/`
+- Cites evidence from source files and distinguishes observed behavior from inference
+- Scales analysis depth for small, medium, large, and enterprise codebases
+
+Use from pi as `/codebase-archaeologist [CODEBASE_PATH]`.
+
 ## Quick Start
 
 ```bash
@@ -50,6 +61,7 @@ cd your-fork
 
 ```
 commands/
+  codebase-archaeologist.md  # pi prompt template for codebase reconstruction specs
   init-fork.md               # pi prompt template for fork initialization
   upstream-sync.md           # pi prompt template for the sync workflow
 .pi/prompts -> ../commands   # project prompt-template discovery symlink
@@ -57,13 +69,15 @@ commands/
 
 ## Maintained Artifacts
 
-When these workflows run on a fork, they create and manage:
+The fork-maintenance commands create and manage:
 
 | File | Purpose |
 |------|---------|
 | `.upstream-version` | Tracks the upstream repo URL and last merged tag |
 | `DOWNSTREAM_CHANGES.md` | Ledger of all fork-only modifications |
 | `AGENTS.md` (Fork Maintenance section) | Declares the repo as a fork and documents the ledger format |
+
+The archaeology command writes reconstruction specs under `codebase-archaeology/[project-name-slug]/`.
 
 ## License
 

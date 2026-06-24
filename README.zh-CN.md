@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-用于维护上游项目长期 Fork 的工作流集合。**init-fork** 负责初始化 Fork 基础设施，**upstream-sync** 负责持续同步上游发布版本。两者都是 pi prompt template 命令。
+用于维护长期 Fork 和逆向分析现有代码库的 pi prompt template 命令集合。**init-fork** 负责初始化 Fork 基础设施，**upstream-sync** 负责持续同步上游发布版本，**codebase-archaeologist** 负责从陌生代码库提取可重建规格。
 
 ## 命令
 
@@ -32,6 +32,17 @@
 
 与 `/upstream-sync` 配合用于持续维护。
 
+### `/codebase-archaeologist`
+
+将现有代码库逆向分析为可用于重建的规格文档包。
+
+- 梳理项目结构、入口点、领域逻辑、数据模型和接口
+- 生成 `spec.md`、`plan.md`、`data-model.md`、`research.md`、`completeness-report.md` 和 `contracts/`
+- 引用源码证据，并区分已观察到的行为与推断
+- 根据小型、中型、大型和企业级代码库调整分析深度
+
+在 pi 中通过 `/codebase-archaeologist [CODEBASE_PATH]` 使用。
+
 ## 快速开始
 
 ```bash
@@ -50,6 +61,7 @@ cd your-fork
 
 ```
 commands/
+  codebase-archaeologist.md  # 代码库重建规格的 pi prompt template
   init-fork.md               # 初始化工作流的 pi prompt template
   upstream-sync.md           # 同步工作流的 pi prompt template
 .pi/prompts -> ../commands   # 项目 prompt template 发现用符号链接
@@ -57,13 +69,15 @@ commands/
 
 ## 维护的产物文件
 
-当这些工作流在 Fork 上运行时，会创建和管理以下文件：
+Fork 维护命令会创建和管理以下文件：
 
 | 文件 | 用途 |
 |------|------|
 | `.upstream-version` | 追踪上游仓库 URL 和最后合并的标签 |
 | `DOWNSTREAM_CHANGES.md` | 所有 Fork 独有修改的账本 |
 | `AGENTS.md`（Fork 维护章节） | 声明仓库为 Fork 并记录账本格式 |
+
+代码库考古命令会将重建规格写入 `codebase-archaeology/[project-name-slug]/`。
 
 ## 许可证
 
