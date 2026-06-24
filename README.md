@@ -1,23 +1,24 @@
-# Maintainer Skills
+# Maintainer Workflows
 
 [中文](README.zh-CN.md)
 
-Opencode skills for maintaining long-lived GitLab forks of upstream projects. Two skills that work together: **init-fork** sets up the fork infrastructure, **upstream-sync** keeps it in sync with upstream releases.
+Maintainer workflows for long-lived forks of upstream projects. **init-fork** sets up the fork infrastructure, and **upstream-sync** keeps it in sync with upstream releases. Both are pi prompt template commands.
 
-## Skills
+## Commands
 
 ### `/upstream-sync`
 
-Sync a GitLab fork with the latest tagged release from an upstream repository.
+Sync a fork with the latest tagged release from an upstream repository.
 
 - Fetches the newest semver tag from upstream
 - Merges into the dev branch via an isolated git worktree
 - Resolves merge conflicts intelligently, using `DOWNSTREAM_CHANGES.md` as the source of truth for fork-specific behavior
 - Detects when upstream supersedes a downstream change and proposes ledger updates
-- Opens a GitLab merge request with upstream release notes
+- Prints the proposed review description and upstream changelog for review
+- Either merges locally after approval or pushes a branch for remote review with upstream release notes
 - Tracks state in `.upstream-version` — no external database
 
-Designed to run unattended in CI (`opencode -p "/upstream-sync [URL]"`) or interactively.
+Use from pi as `/upstream-sync [URL]`.
 
 ### `/init-fork`
 
@@ -35,28 +36,28 @@ Pairs with `/upstream-sync` for ongoing maintenance.
 
 ```bash
 # 1. Clone the fork
-git clone https://gitlab.example.com/your-group/your-fork.git
+git clone https://git.example.com/your-group/your-fork.git
 cd your-fork
 
-# 2. Initialize the fork (one-time)
-opencode -p "/init-fork https://github.com/upstream/project.git"
+# 2. Initialize the fork from pi (one-time)
+/init-fork https://github.com/upstream/project.git
 
-# 3. Sync with upstream (run periodically or in CI)
-opencode -p "/upstream-sync"
+# 3. Sync with upstream from pi (run periodically or interactively)
+/upstream-sync
 ```
 
 ## File Structure
 
 ```
-skills/
-  upstream-sync/SKILL.md    # Sync skill definition and workflow
-  upstream-sync/evals/       # Evaluation test cases
-  init-fork/SKILL.md         # Init skill definition and workflow
+commands/
+  init-fork.md               # pi prompt template for fork initialization
+  upstream-sync.md           # pi prompt template for the sync workflow
+.pi/prompts -> ../commands   # project prompt-template discovery symlink
 ```
 
 ## Maintained Artifacts
 
-When these skills run on a fork, they create and manage:
+When these workflows run on a fork, they create and manage:
 
 | File | Purpose |
 |------|---------|
