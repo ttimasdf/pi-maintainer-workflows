@@ -279,16 +279,43 @@ git commit -m "chore: update DOWNSTREAM_CHANGES.md for upstream $LATEST_TAG sync
 
 Before pushing or merging, compose the proposed review description and upstream changelog locally.
 
-Fetch or compose release notes for every upstream tag included in `LAST_TAG..LATEST_TAG`:
+Generate a git diff patch file in `/tmp` for each upstream tag interval included in `LAST_TAG..LATEST_TAG`, then write a changelog grounded in those patch files. Use hosted upstream release notes only as supporting material below the patch-grounded changelog.
 
 ```bash
 UPSTREAM_GH_REPO="$(printf '%s\n' "$UPSTREAM_URL" | sed -E 's#^https://github.com/##; s#^git@github.com:##; s#\.git$##')"
-RELEASE_NOTES_FILE="/tmp/upstream-release-notes.md"
+PATCH_DIR="/tmp/upstream-sync-patches"
+PATCH_CHANGELOG_FILE="/tmp/upstream-sync-patch-changelog.md"
+UPSTREAM_PROVIDED_CHANGELOG_FILE="/tmp/upstream-release-notes.md"
+UPSTREAM_CHANGELOG_FILE="/tmp/upstream-sync-changelog.md"
+mkdir -p "$PATCH_DIR"
 
+mapfile -t INCLUDED_TAGS < <(git -c versionsort.suffix=-pre tag \
+  --merged "refs/tags/$LATEST_TAG" \
+  --no-merged "refs/tags/$LAST_TAG" \
+  --sort=v:refname 'v[0-9]*' '[0-9]*')
+
+PREV_TAG="$LAST_TAG"
+for tag in "${INCLUDED_TAGS[@]}"; do
+  PATCH_FILE="$PATCH_DIR/${PREV_TAG}..${tag}.patch"
+  git diff --binary "refs/tags/$PREV_TAG" "refs/tags/$tag" > "$PATCH_FILE"
+  PREV_TAG="$tag"
+done
+```
+
+Write `$PATCH_CHANGELOG_FILE` from the generated patch files before consulting hosted release notes:
+
+- For each tag interval, read the corresponding patch file from `$PATCH_DIR` and summarize the actual code, docs, tests, build, dependency, and config changes visible in the diff.
+- Ground every changelog item in the patch content. Do not invent changes from tag names, commit subjects, or hosted release notes.
+- Group related changes by impact area when useful, and call out potentially breaking behavior, migrations, removed APIs/files, dependency updates, and security-sensitive changes that are visible in the patch.
+- If a patch is too large to inspect fully, say which patch file was generated and summarize only the portions inspected.
+
+Fetch or compose hosted upstream release notes for every included tag, then attach them under a subheading below the patch-grounded changelog:
+
+```bash
 {
-  echo "## Upstream release notes: $LAST_TAG -> $LATEST_TAG"
+  echo "## Upstream-provided changelog: $LAST_TAG -> $LATEST_TAG"
   echo
-  for tag in $(git -c versionsort.suffix=-pre tag --merged "refs/tags/$LATEST_TAG" --no-merged "refs/tags/$LAST_TAG" --sort=v:refname 'v[0-9]*' '[0-9]*'); do
+  for tag in "${INCLUDED_TAGS[@]}"; do
     echo "### $tag"
     if [[ "$UPSTREAM_URL" == *"github.com"* ]] && gh release view "$tag" -R "$UPSTREAM_GH_REPO" --json body,url --jq 'if .body then .body + "\n\n" + .url else .url end' 2>/dev/null; then
       true
@@ -298,10 +325,24 @@ RELEASE_NOTES_FILE="/tmp/upstream-release-notes.md"
     fi
     echo
   done
-} > "$RELEASE_NOTES_FILE"
+} > "$UPSTREAM_PROVIDED_CHANGELOG_FILE"
 ```
 
-If release notes cannot be fetched from the hosting provider, fall back to compare/release/tag links where possible. Do not fail the sync because release notes cannot be fetched.
+After `$PATCH_CHANGELOG_FILE` and `$UPSTREAM_PROVIDED_CHANGELOG_FILE` are ready, combine them into `$UPSTREAM_CHANGELOG_FILE` with the patch-grounded changelog first and the upstream-provided changelog under `### Upstream-provided changelog`.
+
+If hosted release notes cannot be fetched from the provider, fall back to compare/release/tag links where possible. Do not fail the sync because hosted release notes cannot be fetched.
+
+The final upstream changelog should have this structure:
+
+```markdown
+## Upstream changelog: <LAST_TAG> -> <LATEST_TAG>
+
+### Patch-grounded changelog
+<Changelog written from /tmp/upstream-sync-patches/*.patch.>
+
+### Upstream-provided changelog
+<Contents of /tmp/upstream-release-notes.md, or fallback links.>
+```
 
 Write `/tmp/upstream-sync-review.md` with this structure:
 
@@ -314,7 +355,7 @@ Automated sync of upstream tag `<LATEST_TAG>` into `<DEV_BRANCH>`.
 <Only include when BOOTSTRAPPED=1. Explain baseline source and warnings.>
 
 ### Upstream changelog
-Release notes/changelog are printed for review before integration and attached to the remote review request when one is created. Summary/link: <compare URL or tag/release URL if derivable>
+Patch-grounded changelog is printed for review before integration and attached to the remote review request when one is created. Summary/link: <compare URL or tag/release URL if derivable>
 
 ### Conflicts resolved
 <Conflict log, or "Clean merge, no conflicts.">
@@ -342,7 +383,7 @@ echo "=== UPSTREAM SYNC REVIEW DESCRIPTION ==="
 cat /tmp/upstream-sync-review.md
 echo
 echo "=== UPSTREAM CHANGELOG ==="
-cat "$RELEASE_NOTES_FILE"
+cat "$UPSTREAM_CHANGELOG_FILE"
 ```
 
 In an interactive run, ask the user to choose:
@@ -377,7 +418,7 @@ Push the prepared sync branch:
 git -C "$WORKTREE_DIR" push --set-upstream origin "$SYNC_BRANCH" --force-with-lease
 ```
 
-Then create or update a review request using the repository's normal hosting workflow. Detect and use available project tooling when it is already configured, for example a repository-specific CLI command, project script, or documented contribution command. Use `/tmp/upstream-sync-review.md` as the description body and `$RELEASE_NOTES_FILE` as the changelog attachment/comment content when the provider supports it.
+Then create or update a review request using the repository's normal hosting workflow. Detect and use available project tooling when it is already configured, for example a repository-specific CLI command, project script, or documented contribution command. Use `/tmp/upstream-sync-review.md` as the description body and `$UPSTREAM_CHANGELOG_FILE` as the changelog attachment/comment content when the provider supports it.
 
 If no hosting workflow is obvious, do not guess. Report the pushed branch, the target branch, and the prepared files:
 
@@ -385,7 +426,7 @@ If no hosting workflow is obvious, do not guess. Report the pushed branch, the t
 Pushed branch: <origin>/<SYNC_BRANCH>
 Target branch: <DEV_BRANCH>
 Review description: /tmp/upstream-sync-review.md
-Upstream changelog: <RELEASE_NOTES_FILE>
+Upstream changelog: <UPSTREAM_CHANGELOG_FILE>
 ```
 
 ## 11. Cleanup
@@ -414,7 +455,7 @@ If `UPSTREAM_SYNC_DRY_RUN=1`, do the local preparation through review body/chang
 <contents of /tmp/upstream-sync-review.md>
 
 === DRY RUN UPSTREAM CHANGELOG ===
-<contents of release notes/changelog>
+<contents of /tmp/upstream-sync-changelog.md>
 ```
 
 Then clean up the worktree and exit successfully.
